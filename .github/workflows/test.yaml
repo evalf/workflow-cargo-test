@@ -1,0 +1,101 @@
+name: Test Rust
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        description: 'Test matrix as JSON. Used keys are `rust-toolchain` and cargo `features`.'
+        type: string
+        default: '{"rust-toolchain": ["stable", "beta"], "features": [""]}'
+        required: false
+      check-fmt:
+        description: 'Check code formatting.'
+        type: boolean
+        default: true
+        required: false
+      artifact:
+        description: 'Name of the coverage artifact.'
+        type: string
+        required: false
+        default: 'coverage'
+      upload-coverage:
+        description: 'Upload coverage to codecov.io.'
+        type: boolean
+        required: false
+        default: true
+jobs:
+  build-grcov:
+    name: 'Build grcov'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache
+        id: cache
+        uses: actions/cache@v3
+        with:
+          key: grcov
+          path: ~/.cargo/bin/grcov
+      - name: Install Rust toolchain
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: cargo install grcov
+  test:
+    needs: build-grcov
+    name: 'Test Rust ${{ matrix.rust-toolchain }}, features ${{ matrix.features }}'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJSON(inputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          # component llvm-tools-preview is needed for grcov
+          components: llvm-tools-preview
+      - name: Test
+        run: cargo test --all --features '${{ matrix.features }}'
+        env:
+          RUSTFLAGS: '-C instrument-coverage'
+          LLVM_PROFILE_FILE: 'report-%p-%m.profraw'
+      - name: Get cached grcov
+        uses: actions/cache@v3
+        with:
+          key: grcov
+          path: ~/.cargo/bin/grcov
+      - name: Test
+        run: env
+      - name: Name of coverage file (part 1)
+        run: echo cov_id='${{ matrix.rust-toolchain }}' >> $GITHUB_ENV
+      - name: Name of coverage file (part 2)
+        if: ${{ matrix.features }}
+        run: echo cov_id="$cov_id"-'${{ matrix.features }}' >> $GITHUB_ENV
+      - name: Convert coverage
+        run: |
+          mkdir -p target/coverage
+          grcov . --binary-path target/debug/deps/ -s . -t lcov --branch --ignore-not-existing --ignore '../**' --ignore '/*' -o "target/coverage/$cov_id.lcov"
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ inputs.artifact }}
+          path: target/coverage
+  check-fmt:
+    name: Check code formatting
+    if: ${{ inputs.check-fmt }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check code formatting
+        run: cargo fmt --all --check
+  upload-coverage:
+    name: Upload coverage to codecov.io
+    if: ${{ inputs.upload-coverage }}
+    needs: test
+    uses: evalf/workflow-codecov/.github/workflows/upload.yaml@release/1
+    with:
+      artifact: ${{ inputs.artifact }}

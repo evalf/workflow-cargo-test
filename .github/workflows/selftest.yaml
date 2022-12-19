@@ -1,0 +1,59 @@
+name: selftest
+on:
+  pull_request:
+  push:
+    branches:
+      - release/*
+jobs:
+  defaults:
+    uses: ./.github/workflows/test.yaml
+    with:
+      artifact: 'coverage-defaults'
+      upload-coverage: false
+  check-defaults:
+    needs: defaults
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: coverage-defaults
+          path: target/coverage
+      - name: Canonicalize coverage
+        run: |
+          cd target/coverage
+          for f in *.lcov; do
+            sort "$f" > tmp
+            mv tmp "$f"
+          done
+      - name: Check coverage
+        run: diff -ur target/coverage desired-canon-cov-defaults
+
+  matrix:
+    uses: ./.github/workflows/test.yaml
+    with:
+      matrix: '{"rust-toolchain": ["stable", "beta"], "features": ["x", "y", "x,y"], "exclude": [{"rust-toolchain": "beta", "features": "y"}]}'
+      artifact: 'coverage-matrix'
+      upload-coverage: false
+  check-matrix:
+    needs: matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: coverage-matrix
+          path: target/coverage
+      - name: Canonicalize coverage
+        run: |
+          cd target/coverage
+          for f in *.lcov; do
+            sort "$f" > tmp
+            mv tmp "$f"
+          done
+      - name: Check coverage
+        run: diff -ur target/coverage desired-canon-cov-matrix
